@@ -1,0 +1,1775 @@
+---
+title: "Projet d’étude 4 ModIA UFs Analyse de données & Eléments de modélisation statistique"
+author: 
+  - name: "Ajerame Ilias"
+  - name: "Boulaalam El Mehdi"
+  - name: "Grande Revuelta Ana"
+date: "`r Sys.Date()`"
+format:
+  pdf:
+    documentclass: article
+    toc: TRUE
+    toc_depth: 2
+    number-sections: true
+    header-includes:
+    - \usepackage{color}
+    - \usepackage{float} 
+    - \newcommand{\X}{\mathbf{X}}
+    geometry: 
+    - top=1cm
+    - bottom=2cm
+    - left=2cm
+    - right=2cm
+cache: true
+execute: 
+  warning: false
+  message: false
+editor: 
+  markdown: 
+    wrap: sentence
+---
+
+```{r}
+#| echo: false
+#| label: librairies
+
+library(ggplot2)
+library(corrplot)
+library(ggcorrplot)
+library(FactoMineR)
+library(factoextra)
+library(gridExtra)
+library(knitr)
+library(reshape2)
+library(reticulate)
+library(ggpubr)
+library(cowplot)
+library(ggfortify)
+library(leaps)
+library(MASS)
+library(nortest)
+library(clusterSim)
+library(circlize)
+library(mclust)
+library(scales)
+library(broom)
+library(dplyr)
+
+```
+
+\newpage
+
+\vspace{1cm}
+
+# Introduction
+
+Nous nous proposons dans ce projet d’étudier un jeu de données qui fournit un aperçu détaillé des routines d’exercice, des attributs physiques et des mesures de la condition physique de 973 membres d’une salle de sport.
+Nous retrouvons 9 variables quantitatives :
+
+-   *age* : Age du membre de la salle de sport
+-   *weight* : Poids du membre en kilogrammes
+-   *height* : Taille du membre en mètres
+-   *bpm ave* : Fréquence cardiaque moyenne pendant les séances d’entraı̂nemen
+-   *duration* : Durée de chaque séance d’entraı̂nement en heures
+-   *calories* : Total des calories brûlées au cours de chaque séance
+-   *fat* : Pourcentage de graisse corporelle du membre
+-   *water* : Consommation quotidienne d’eau pendant les séances d’entraı̂nement
+-   *bmi* : Indice de masse corporelle (IMC), calculé à partir de la taille et du poids)
+
+et 4 variables qualitatives :
+
+-   *gender* : Sexe du membre de la salle de sport (homme ou femme)
+-   *type* : Type d’entraı̂nement effectué (cardio, strenght, yoga, HIIT)
+-   *freq* : Nombre de séances d’entraı̂nement par semaine
+-   *level* : Niveau d’expérience, de débutant (1) à expert (3)
+
+L’objectif est d’étudier le lien entre les différentes variables.
+Nous explorons alors la structure des données pour identifier les corrélations entre les variables et segmenter les individus en différentes classes.
+Nous commençons alors par une analyse descriptive des données afin d’identifier les variables qui se démarquent le plus et par la suite faire des tests d’hypothèse pour affiner nos suppositions.
+Dans une seconde étape, nous appliquons des méthodes de clustering pour identifier les groupes homogènes d’individus.
+Finalement, nous modélisons les variables comme le nombre de calories brûlées ou le niveau d’expérience.
+
+```{r}
+#| echo: false
+#| output: false
+#| label: recupe données
+
+Sport<-read.table("DataGym-projet4modIA-2526.csv",header=T)
+
+Sport$gender<-as.factor(Sport$gender) #on lui dit bien que ces variables sont qualitatives
+Sport$type<-as.factor(Sport$type)
+Sport$freq<-as.factor(Sport$freq)
+Sport$level<-as.factor(Sport$level)
+
+summary(Sport)
+```
+
+# Statistiques descriptives
+
+## Analyse unidimensionnelle
+
+La distribution des variables quantitatives dans la @fig-boxplots montre que les données ne sont pas à la même échelle ; il faut penser à les normaliser.
+Nous pouvons également à la vue des distributions supposer un lien entre l'âge et la fréquence cardiaque ; le pourcentage de graisse corporelle et la taille de l'individu, ou encore entre le total de calories brûlées et l'IMC.
+
+```{r}
+#| echo: false
+#| output: true
+#| label: fig-boxplots 
+#| fig-cap: Distribution des variables quantitatives
+#| fig.pos: 'H'
+
+X<- Sport[, -c(2, 8, 11, 12)]
+boxplot_calories<-ggplot(melt(X[6]),aes(x=variable,y=value))+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1))+geom_violin()
+boxplot_1<-ggplot(melt(X[c(1,2,4,7,9)]),aes(x=variable,y=value))+
+    theme(axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1))+geom_violin()
+boxplot_2<-ggplot(melt(X[c(3,5,8)]),aes(x=variable,y=value))+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1))+geom_violin()
+
+plot_grid(boxplot_calories, boxplot_1, boxplot_2, ncol = 3, nrow = 1)+ theme_light()
+```
+
+Pour les variables qualitatives, nous décidons de les représenter sous forme d'histogrammes @fig-histogram.
+Si les variables de genre et de type ont une distribution quasi-uniforme, ce n'est pas le cas pour les variables de fréquence et niveau d'entrainement.
+Il peut alors être judicieux de regrouper certaines modalités.
+
+```{r}
+#| echo: false
+#| output: true
+#| label: fig-histogram 
+#| fig-cap: Distribution des variables qualitatives
+#| fig.pos: 'H'
+
+p1 <- ggplot(Sport, aes(x = gender)) + geom_bar(fill = "skyblue") +theme(axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1))
+p2 <- ggplot(Sport, aes(x = type)) + geom_bar(fill = "lightgreen")+theme(axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1))
+p3 <- ggplot(Sport, aes(x = freq)) + geom_bar(fill = "salmon") +theme(axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1))
+p4 <- ggplot(Sport, aes(x = level)) + geom_bar(fill = "gold") +theme(axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1))
+
+plot_grid(p1, p2, p3, p4, ncol =4 )+ theme_light()
+
+
+```
+
+## Analyse bidimensionnelle
+
+La matrice des corrélations, présentée à la @fig-corrplot, met en avant des liens entre les variables physiologiques et les habitudes d'entrainement.
+Tout d’abord, une corrélation positive observée entre la durée de l’entraînement et le nombre de calories brûlées, indiquant que plus la séance d’entraînement est longue, plus la dépense calorique est élevée.
+De même, le poids des individus est positivement corrélé à leur IMC.
+Par ailleurs, les variables de taille, poids et consommation d’eau présentent des corrélations positives deux à deux, suggérant une association entre la morphologie des individus et leur hydratation pendant l’effort.
+Une tendance similaire est observée entre la consommation d’eau, la durée de l’entraînement et le nombre de calories brûlées.
+Enfin, les calories brûlées sont également corrélées positivement avec le nombre de battements cardiaques par minute, plus l'effort est intense, plus la dépense est élevée.
+En revanche, le pourcentage de graisse corporelle se distingue par des corrélations négatives avec la durée de l’entraînement, les calories brûlées et la consommation d’eau.
+Cela suggère que les individus avec un pourcentage de graisse corporelle plus faible sont aussi ceux qui s’entraînent plus longtemps, brûlent davantage de calories et s’hydratent plus pendant leurs séances.
+
+Pour les variables qualitatives, (dans les histogrammes non affichés mais présents dans le code) nous observons la même répartition des niveaux, du genre et des fréquences quel que soit le type de sport pratiqué.
+De même pour la répartition des fréquences et des niveaux selon le genre.
+Il peut être judicieux de tester la nullité des paramètres associés au type de sport et au genre dans notre modèle.
+Par ailleurs, la @fig-corrplot révèle une dépendance entre le niveau de sport et la fréquence d'entraînement : plus le niveau de pratique est élevé, plus la fréquence d'entraînement tend à augmenter.
+Cette relation pourrait traduire une adaptation des habitudes d'entraînement en fonction de l’expertise des individus.
+
+```{r}
+#| echo: false
+#| label: fig-corrplot
+#| fig-cap: Matrice des corrélations entre les 9 variables quantitatives (gauche) et table de contingence entre les variables niveau et fréquence (droite)
+#| fig.pos: 'H'
+
+# matrice de corrélation
+g_corr <- ggcorrplot(
+  cor(X),
+  method = "square",
+  outline.col = "white",
+  ggtheme = theme_minimal(base_size = 10)
+)+
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1, size = 8),  
+    axis.text.y = element_text(size = 8)  
+  )
+
+# table de contingence
+g_ball <- ggballoonplot(data.frame(table(Sport$level, Sport$freq)),
+              x = "Var1", y = "Var2",
+              shape = 23,
+              fill = "value", color = "lightgray",
+              size = 10, show.label = TRUE,
+              ggtheme = theme_minimal())+
+  gradient_fill(c("blue", "white", "red"))
+
+g_ball <- g_ball +
+  labs(x = "level", y = "freq") +
+  theme_minimal(base_size = 10)
+
+
+plot_grid(g_corr, g_ball, align = "hv")+ theme_light()
+
+```
+
+```{r}
+#| echo: false
+#| output: false
+#| label: fig-histo
+#| fig.pos: 'H'
+
+# "type" vs "genre"
+g1<-ggplot(Sport, aes(x = type, fill = gender)) +
+  geom_bar(position = "stack") +
+  labs(x = "", y = "Nombre d'individus", fill = "Genre") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1))
+# "type" vs "freq"
+g2<-ggplot(Sport, aes(x = type, fill = freq)) +
+  geom_bar(position = "stack") +
+  labs(x = "", y = "Nombre d'individus", fill = "freq")+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1))
+# "type" vs "level"
+g3<-ggplot(Sport, aes(x = type, fill = level)) +
+  geom_bar(position = "stack") +
+  labs(x = "Type de sport", y = "Nombre d'individus", fill = "level")+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1))
+
+# "genre" vs "level"
+g1_genre<-ggplot(Sport, aes(x = gender, fill = level)) +
+  geom_bar(position = "stack") +
+  labs(x = "", y = "Nombre d'individus", fill = "level") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1))
+# "type" vs "freq"
+g2_genre<-ggplot(Sport, aes(x = gender, fill = freq)) +
+  geom_bar(position = "stack") +
+  labs(x = "genre", y = "Nombre d'individus", fill = "freq")+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1))
+
+
+grid.arrange(
+  g1, g1_genre,  # Première ligne : 3 graphiques
+  g2, g2_genre,  # Deuxième ligne : 2 graphiques
+  g3,
+  ncol = 2,  # 2 lignes au total
+  nrow = 3 # 3 colonnes pour la première ligne
+)
+```
+
+## Reduction de dimension
+
+### Pour les variables quantitatives {#sec-reduction}
+
+```{r}
+#| echo: false
+#| output: false
+#| label: code-ACP
+
+respca=PCA(Sport,quali.sup = c(2,8,11,12), graph=F)
+
+```
+
+La projection des individus sur le premier plan factoriel (cf. @fig-ACP) permet d’analyser les relations entre les variables quantitatives étudiées.
+D’après le cercle des corrélations, l’axe 1 est principalement défini par la durée d’entraînement et le nombre de calories brûlées.
+À l’inverse, la première composante principale est anti-corrélée avec le pourcentage de graisse corporelle, indiquant que les individus brûlant davantage de calories et s’entraînant plus longtemps ont tendance à présenter un pourcentage de graisse corporelle plus faible.
+
+La deuxième composante principale est quant à elle associée au poids et à l'IMC, tout en étant faiblement anti-corrélée avec la durée d’entraînement et les calories brûlées.
+Cela suggère que les individus avec un poids et un IMC plus élevés tendent à avoir des séances d’entraînement moins longues et une dépense calorique plus faible.
+
+En termes d’attributs physiques, la projection des individus révèle que les individus plus lourds et avec un IMC élevé se situent principalement en haut du graphe.
+Ceux présentant un pourcentage de graisse corporelle plus élevé sont positionnés à gauche.
+Cette répartition est cohérente avec l’habillage par genre, où les femmes sont majoritairement situées en bas à gauche, tandis que les hommes se trouvent plus haut et à droite.
+
+Concernant les habitudes d’entraînement, les individus dont l’effort est plus intense (séances longues, avec un nombre élevé de battements cardiaques par minute (BPM) et une dépense calorique importante) se retrouvent en bas à droite du graphe.
+Cette observation est confirmée par les habillages supplémentaires (non affichés ici), où les individus de niveau 3 et ceux s’entraînant 5 fois par semaine sont également localisés dans cette région.
+Les deux regroupements distincts en bas à droite correspondent donc aux individus ayant le meilleur niveau de pratique et un effort plus intense.
+Parmi ces groupes, le regroupement le plus haut est associé aux hommes, tandis que le regroupement le plus bas est associé aux femmes.
+
+```{r}
+#| echo: false
+#| output: true
+#| label: fig-ACP
+#| fig-cap: Projection des individus dans le premier plan factoriel (gauche) et Corrélation entre les variables et les deux premières composantes principales (droite)
+#| fig.pos: 'H'
+
+# Graphique 1 : Projection des individus
+p1 <- fviz_pca_ind(respca, label = "none", habillage = c(2)) +
+  theme(legend.position = "bottom")
+
+# Graphique 2 : Corrélation des variables
+p2 <- fviz_pca_var(respca, repel = TRUE)
+
+plot_grid(p1, p2, ncol = 2)+ theme_light()
+
+```
+
+```{r}
+#| echo: false
+#| output: false
+#| label: fig-1PF
+#| fig.pos: 'H'
+
+p1<-fviz_pca_ind(respca,label="none",habillage=2)+
+  theme(legend.position="bottom")
+p2<-fviz_pca_ind(respca,label="none",habillage=8)+
+  theme(legend.position="bottom")
+p3<-fviz_pca_ind(respca,label="none",habillage=11)+
+  theme(legend.position="bottom")
+p4<-fviz_pca_ind(respca,label="none",habillage=12)+
+  theme(legend.position="bottom")
+
+grid.arrange(p1, p2, p3, p4, ncol = 2)
+
+```
+
+### Pour les variables qualitatives
+
+```{r}
+#| echo: false
+#| output: false
+#| label: code-MCA
+
+X_qual<- Sport[, c(2, 8, 11, 12)]
+resMCA<-MCA(X_qual, graph = F)
+
+```
+
+La table des ratios de corrélation carré en @fig-MCA nous incite à projeter les modalités sur le plan formé par les composantes 1 et 3 pour saisir des informations sur toutes les variables.
+Ainsi, sur l'axe des abscisses nous obtenons une bonne représentation des modalités des variables de fréquence et niveau d'entrainement ; et sur l'axe des ordonnées nous pouvons visualiser les modalités associées au type de sport, à la fréquence d'entrainement, et moins fiablement au genre.
+Nous pouvons donc en déduire que les niveaux et fréquences de sport sont équitablement distribués selon le genre des individus et selon le sport pratiqué.
+
+```{r}
+#| echo: false
+#| output: true
+#| label: fig-MCA
+#| fig-cap: Projection des individus dans le plan factoriel formé par les axes associés à la 1ère et la 5ème composante principale (gauche) et table de contingence avec le ratio de corrélation carré entre chaque variable et chaque axe (droite)
+#| fig.pos: 'H'
+
+tab_etha2 <- ggcorrplot(resMCA$var$eta2,
+           method = "square",
+           lab = TRUE,
+           outline.col = "white",
+           ggtheme = theme_minimal(base_size = 10))
+
+tab_ind <- fviz_mca_biplot(resMCA, invisible = "ind", repel = T, axes = c(1,3) ) 
+
+plot_grid(tab_ind, tab_etha2, ncol = 2)+ theme_light()
+```
+
+```{r}
+#| echo: false
+#| output: false
+#| label: fig-MCA-2
+#| fig.pos: 'H'
+
+fviz_eig(resMCA)
+fviz_mca(resMCA, repel =T, axes = c(1,3), invisible = "ind" )
+fviz_mca(resMCA, repel =T, axes = c(1,4), invisible = "ind" )
+
+
+ggcorrplot(resMCA$var$eta2,
+           method = "square",
+           lab = TRUE,
+           outline.col = "white",
+           ggtheme = theme_minimal(base_size = 10))
+
+
+# Visualize ind contributions on axes 1 et 2
+grid.arrange(
+  fviz_contrib(resMCA, choice ="ind", axes = 1),
+  fviz_contrib(resMCA, choice ="ind", axes = 2),
+  fviz_contrib(resMCA, choice ="ind", axes = 3),
+  fviz_contrib(resMCA, choice ="ind", axes = 4),
+  fviz_contrib(resMCA, choice ="ind", axes = 5)
+)
+# Visualize var contributions on axes 1 et 2
+grid.arrange(
+  fviz_contrib(resMCA, choice ="var", axes = 1),
+  fviz_contrib(resMCA, choice ="var", axes = 2),
+  fviz_contrib(resMCA, choice ="var", axes = 3),
+  fviz_contrib(resMCA, choice ="var", axes = 4),
+  fviz_contrib(resMCA, choice ="var", axes = 5)
+)
+```
+
+Suite à cette étape d’analyse descriptive, nous concluons qu’il faut normaliser les données quantitatives.
+Si nous observons plus en détail la variable associée au nombre de calories brûlées, nous constatons qu’elle est corrélée de manière différente avec chacune des autres variables quantitatives.
+Chaque variable aura alors son influence sur les modélisations à suivre.
+Les réductions de dimensions permettent de visualiser trois masses principales.
+Les deux premières regroupent les individus hommes et femmes les plus sportifs ; la troisième regroupe le reste des individus, moins sportifs.
+Nous nous intéressons donc par la suite au nombre de calories brûlées , associées à la caractéristique sportif et au genre.
+
+# Tests d’hypothèses
+
+Afin de modéliser le nombre de calories brûlées, nous commençons par étudier la loi de cette variable ainsi que les dépendances qu’elle peut avoir avec le genre.
+
+## Distribution du nombre de calories brûlées
+
+D'après la @fig-boxplots le nombre de calories brûlées semble suivre une loi normale, nous allons le vérifier avec la droite d'Henry @fig-droite_henry et le test de normalité de Shapiro-Wilk.
+
+```{r}
+#| echo: false
+#| output: true
+#| label: fig-droite_henry
+#| fig-cap: Droite d'Henry sur le nombre de calories brûlées
+#| fig.pos: 'H'
+
+qqnorm(Sport$calories,pch=20)
+qqline(Sport$calories, col = "red")
+
+```
+
+```{r}
+#| echo: false
+#| output: true
+#| label: code-dist_calories
+#| fig.pos: 'H'
+
+shapiro.test(Sport$calories)
+```
+
+Les points $(X_i, \phi^{-1} \circ \hat{F}_n(X_i))$ ne sont pas complètement alignés et le test de Shapiro rejette largement l'hypothèse $H_0$ de normalité de l'échantillon.
+
+## Dépendance entre le genre et le nombre de calories brûlées
+
+D'après les résultats précédents, avec absence de normalité, nous ne pouvons pas utiliser un modèle ANOVA pour étudier si le nombre de calories brûlées dépend du genre.
+Nous allons alors utiliser un test de Kolmogorov-Smirnov pour voir si l'échantillon composé des individus de genre masculin et celui composé des individus de genre féminin ont la même distribution (et donc sont indépendants vis à vis du nombre de calories brûlées).
+Les p-valeurs des différents tests se trouvent dans la @tbl-Kolmogorov-Smirnov_calories_indpdt_genre.
+Nous pouvons en déduire que touts sports confondus, au niveau 5%, le genre a une influence sur le nombre de calories brûlées.
+Cependant, si nous ne prenons que des individus praticant du Yoga ou du HIIT, nous pouvons suposer au niveau 5% que le genre n'a pas d'influence sur le nombre de calories brûlées.
+Pour les deux autres types de sport (Cardio, Strength) la p-valeur est très faible, le genre a donc une influence.
+
+```{r}
+#| echo: false
+#| output: true
+#| label: tbl-Kolmogorov-Smirnov_calories_indpdt_genre
+#| tbl-cap: "Tableau des p-valeurs pour l'effet du genre sur les calories brûlées par type de sport"
+#| fig.pos: 'H'
+
+# Initialisation
+results <- data.frame(sport = character(), p_value = numeric(), stringsAsFactors = FALSE)
+
+# Test pour tous les sports confondus
+ks_result_all <- ks.test(
+  Sport$calories[Sport$gender == "Male"],
+  Sport$calories[Sport$gender == "Female"],
+  alternative = "two.sided"
+)
+results <- rbind(
+  results,
+  data.frame(sport = "all", p_value = ks_result_all$p.value)
+)
+
+# Tests pour chaque type de sport
+sport_types <- unique(Sport$type)
+
+for (sport in sport_types) {
+  subset <- Sport[Sport$type == sport, ]
+  if (nrow(subset) > 0) {
+    ech_male <- subset$calories[subset$gender == "Male"]
+    ech_female <- subset$calories[subset$gender == "Female"]
+
+    if (length(ech_male) > 0 && length(ech_female) > 0) {
+      ks_result <- ks.test(ech_male, ech_female, alternative = "two.sided")
+      results <- rbind(
+        results,
+        data.frame(sport = sport, p_value = ks_result$p.value)
+      )
+    }
+  }
+}
+
+# Affichage 
+knitr::kable(results, align = 'c')
+```
+
+## Dépendance entre le genre et le niveau d’expérience ou le type de sport pratiqué. 
+
+Le type de sport et le genre étant des variables qualitatives, nous allons utiliser un test d'indépendance du Khi-deux pour tester $H_0$\$ : $X$ et $Y$ sont indépendantes contre $H_1$ : $X$ et $Y$ ne sont pas indépendantes.
+
+```{r}
+#| echo: false
+#| output: true
+#| label: code-Khi-deux
+#| fig.pos: 'H'
+
+chisq.test(table(Sport$type, Sport$gender))
+chisq.test(table(Sport$level, Sport$gender))
+```
+
+D'après la p-valeur obtenue, nous acceptons largement $H_0$, nous supposons que le type de sport et le genre sont indépendants.
+Il en est de même pour l'indépendance entre le niveau et le genre.
+Ces résultats sont cohérents avec les statistiques descriptives réaliséees au début.
+
+Ainsi, nous en déduisons que dans notre jeu de données, les variables liées au type de pratique sportive des individus sont indépendantes du genre.
+Hommes et femmes semblent avoir les mêmes habitudes d'entraînement.
+D’où vient alors la distinction visible sur l’ACP (@fig-ACP) ?
+Nous réalisons plusieurs clusterings dans le but de formaliser les groupes mentionnés précédemment et de visualiser les variables qui contribuent à la formation de ces groupes.
+
+# Clustering des individus
+
+```{r}
+#| echo: false
+#| output: false
+#| label: code-intro-cluster
+#| fig.pos: 'H'
+set.seed(123)
+# 1. Chargement des données 
+donnees_gym <- read.csv("DataGym-projet4modIA-2526.csv", sep=" ")
+# 2. Sélection des variables quantitatives
+vars_quanti <- c("age", "weight", "height", "bpm_ave", "duration", 
+                 "calories", "fat", "water", "bmi")
+donnees_gym_quanti <- donnees_gym[, vars_quanti]
+# 3. Centrage-Réduction
+donnees_gym_scaled <- scale(donnees_gym_quanti)
+```
+
+## Clustering par classification hierarchique
+
+Nous commencons par faire un clustering par classification hierarchique sur les données quantitatives.
+Dans l'algorithme, lors de l'étape d'agrégation, bien que les mesures de lien complet et moyen renvoient des dendogrammes équilibrés, nous décidons d'utiliser la mesure de Ward afin de réduire au maximum l'inertie intra classes à chaque étape.
+Ainsi, le dendogramme obtenu en @fig-choixK-hierarchique montre que la plus grande réduction de l'inertie à lieu entre le passage entre 4 et 3 classes.
+Sur la même figure, le critère de Calinski-Harabasz est maximisé pour $K=3$.
+Il semble donc cohérent par ces deux critères de sélection de choisir un clustering à 3 classes.
+
+```{r}
+#| echo: false
+#| output: false
+#| label: code-intro-cluster-hierarchique
+#| fig.pos: 'H'
+
+# Calcul distances
+d <- dist(donnees_gym_scaled, method="euclidean")
+
+# classification
+hclustsingle<-hclust(d, method = "single") # pas fort interet côté clustering car si on coupe, un endroit avec tout et une branche avec peu de valeurs
+hclustcomplete<-hclust(d, method = "complete") # dendogramme plus équilibré
+hclustaverage<-hclust(d, method = "average") # un peu de chainage sur la fin mais plus équilibré que le lien simple
+hward <- hclust(d, method="ward.D2")
+
+# Dendrogrammes
+#fviz_dend(hclustsingle, show_labels=FALSE, main="CAH - single")
+#fviz_dend(hclustcomplete, show_labels=FALSE, main="CAH - complete")
+#fviz_dend(hclustaverage, show_labels=FALSE, main="CAH - average")
+#fviz_dend(hward, show_labels=FALSE, main="CAH - Ward")
+
+```
+
+```{r}
+#| echo: false
+#| output: true
+#| label: fig-choixK-hierarchique
+#| fig-cap: Dendogramme sur les individus avec la mesure d'agrégation de Ward sur les données quantitatives (à gauche) et évolution du critère de Calinski-Harabasz selon le nombre de classes (à droite).
+#| fig-width: 15
+#| fig-height: 5
+#| fig.pos: 'H'
+
+
+# Calcul distances
+d <- dist(donnees_gym_scaled, method="euclidean")
+hward <- hclust(d, method="ward.D2")
+dend_plot <- fviz_dend(hward, show_labels=FALSE, main="CAH - Ward", k=3, rect=TRUE)
+
+# CHOIX DE K avec Calinski-Harabasz
+CH <- NULL
+Kmax <- 10
+for (k in 2:Kmax){
+  CH <- c(CH, index.G1(donnees_gym_scaled, cutree(hward, k)))
+}
+
+# Graphique
+daux <- data.frame(K=2:Kmax, CH=CH)
+ch_plot<- ggplot(daux, aes(x=K, y=CH)) + 
+  geom_line() + geom_point() +
+  labs(title="Critère Calinski-Harabasz")
+
+# K optimal = maximum de CH
+K_opt <- which.max(CH) + 1
+cat("K optimal (CH):", K_opt, "\n")
+
+plot_grid(dend_plot, ch_plot, ncol = 2)+ theme_light()
+clust_cah <- cutree(hward, K_opt)
+```
+
+## Clustering par la méthode des K-means {#sec-kmeans}
+
+Dans un deuxième temps, nous réalisons un clustering par la méthode des K-means.
+A l'initialisation, les centres de gravité sont choisis aléatoirement.
+Nous utilisons le critère de l'inertie intra classe au sens du R² ainsi que le critère silhouette représentés en @fig-choixK-Kmeans.
+Le coude de la courbe de l'inertie intra classe n'est pas bien défini, et nous fait choisir environ 7 classes.
+L'évolution du critère silhouette montre un pic pour $K=3$.
+Nous comparons ces deux clustering : $P_7$ et $P_3$ plus en détails dans la @fig-choixK-Kmeans2 et en projetant les individus sur le premier plan factoriel (codé mais non affiché).
+Nous constatons qu'une classe $P_3$ qui représente (d'après le premier plan factoriel) les individus les plus sportifs, a été séparée en 2 ; distinguant le genre comme vu en @sec-reduction.
+Les autres classes de $P_7$ sont toutes formées à partir d'une seule autre classe de $P_3$, sans trouver de lien interprétable.
+Nous décidons de garder le clustering à 3 classes, plus simple, permettant de bien distinguer les individus sur le premier plan factoriel et qui maximise clairement le critère silhouette.
+
+```{r}
+#| echo: false
+#| output: true
+#| label: fig-choixK-Kmeans
+#| fig-cap: Evolution de l'inertie intra classes au sens du R² (à gauche) et du critère Silhouette selon le nombre de classes (à droite).
+#| fig-width: 15
+#| fig-height: 5
+#| fig.pos: 'H'
+
+# Tester plusieurs K
+Kmax <- 20
+Iintra <- NULL
+Silhou_km <- NULL
+
+for (k in 2:Kmax){
+  resaux <- kmeans(donnees_gym_scaled, centers=k, nstart=25)
+  Iintra <- c(Iintra, resaux$tot.withinss)
+  
+  # Silhouette
+  aux <- silhouette(resaux$cluster, dist(donnees_gym_scaled))
+  Silhou_km <- c(Silhou_km, mean(aux[,3]))
+}
+
+# Critère du coude
+
+df <- data.frame(K=2:Kmax, Iintra=Iintra)
+plot_RSQ <- ggplot(df, aes(x=K, y=Iintra)) + 
+  geom_line() + geom_point() +
+  labs(title="Critère du coude - K-means",
+       x="Nombre de clusters", y="Inertie intra-classe")
+
+# Critère Silhouette
+df_silh <- data.frame(K=2:Kmax, Silhouette=Silhou_km)
+plot_silh <- ggplot(df_silh, aes(x=K, y=Silhouette)) + 
+  geom_line() + geom_point() +
+  labs(title="Critère Silhouette - K-means")
+
+plot_grid(plot_RSQ, plot_silh, ncol=2)+theme_light()
+```
+
+```{r}
+#| echo: false
+#| output: true
+#| label: fig-choixK-Kmeans2
+#| fig-cap: Diagramme de comparaison des clustering de type k-means à 3 et 7 classes.
+#| fig-width: 15
+#| fig-height: 3
+#| fig.pos: 'H'
+
+res_kmeans3 <- kmeans(donnees_gym_scaled, centers=3, nstart=25)
+res_kmeans7 <- kmeans(donnees_gym_scaled, centers=7, nstart=25)
+
+comparison_matrix <- table(res_kmeans3$cluster, res_kmeans7$cluster)
+
+grid.col <- c(
+  "#1F77B4", "#FF7F0E", "#2CA02C",  # Couleurs pour les clusters de k=3
+  "#D62728", "#9467BD", "#8C564B", "#E377C2"  # Couleurs supplémentaires pour k=7
+)
+
+chor<- chordDiagram(
+  comparison_matrix,
+  grid.col = grid.col
+)
+
+```
+
+```{r}
+#| echo: false
+#| output: false
+#| label: fig-choixK-Kmeans3
+#| fig-cap:  Comparaison des clustering de type k-means à 3 et 7 classes avec leur projection sur le premier plan factoriel. 
+#| fig.pos: 'H'
+#| fig-width: 10
+
+pk3 <- fviz_pca_ind(respca, geom="point", 
+                   habillage=as.factor(res_kmeans3$cluster),
+                   title="K-means", label="none",
+                   addEllipses=TRUE)
+
+pk7 <- fviz_pca_ind(respca, geom="point", 
+                   habillage=as.factor(res_kmeans7$cluster),
+                   title="K-means", label="none",
+                   addEllipses=TRUE)
+res_kmeans4 <- kmeans(donnees_gym_scaled, centers=4, nstart=25)
+pk4 <- fviz_pca_ind(respca, geom="point", 
+                   habillage=as.factor(res_kmeans4$cluster),
+                   title="K-means", label="none",
+                   addEllipses=TRUE)
+
+grid.arrange(pk3, pk7, pk4, ncol = 2)
+```
+
+```{r}
+#| echo: false
+#| output: false
+#| label: code-Kmeans-final
+#| fig.pos: 'H'
+
+
+# Clustering final
+res_kmeans <- kmeans(donnees_gym_scaled, centers=3, nstart=25)
+clust_kmeans <- res_kmeans$cluster
+```
+
+## Clustering par modèle de mélanges
+
+Dans un troisième temps, nous réalisons un clustering par modèle de mélanges.
+Nous utilisons les critères BIC et ICL afin de déterminer le meilleur modèle.
+Comme le montre la sortie en @fig-choixK-mélange, les deux critères sont optimisé pour $K=7$ et des ellipses varriant en volume et orientation mais avec des étalements égaux : VEV.
+Cependant, le boxplot des probabilités maximales à posteriori @fig-posteriori-mélange affiche beaucoup d'individus avec des probabilités faibles ce qui laisse dubitatif quand à l'efficacité du modèle.
+Seul les classes 1 et 7 sont bien représentées, il s'agit à nouveau des individus les plus sportifs, l'une regroupant les hommes, l'autre les femmes (cf @sec-reduction).
+
+```{r}
+#| echo: false
+#| output: true
+#| label: fig-choixK-mélange
+#| fig-subcap:
+#| - "Evolution des critères BIC et ICL selon le nombre de classe du clustering. "
+#| layout-ncol: 1
+#| fig-width: 15
+#| fig-height: 6
+#| fig.pos: 'H'
+
+# Modélisation (teste automatiquement plusieurs K)
+res_mclust_BIC <- Mclust(donnees_gym_scaled, G=2:10 )
+res_mclust_ICL <- mclustICL(donnees_gym_scaled, G=2:10 )
+
+# Visualisation BIC
+plot_grid(fviz_mclust(res_mclust_BIC, what="BIC", main="Critère BIC - Mclust"))+theme_light()
+summary(res_mclust_ICL)
+```
+
+```{r}
+#| echo: false
+#| output: true
+#| label: fig-posteriori-mélange
+#| fig-cap:  Boxplot des probabilités a posteriori maximales
+#| fig-width: 15
+#| fig-height: 5
+#| fig.pos: 'H'
+
+res_ICL<-Mclust(donnees_gym_scaled, G=7, modelNames = "VEV")
+clust_mclust<-res_ICL$classification
+Aux<-data.frame(label=paste("CL", clust_mclust, sep=""), 
+                proba= apply(res_ICL$z, 1,max) )
+plot_grid(ggplot(Aux,aes(x=label,y=proba))+geom_boxplot())+theme_light()
+```
+
+## Sélection de modèle
+
+Afin, de garder un seul clustering, qui regroupe les individus de la meilleure façon possible, nous comparons les trois modèles sélectionnés.
+Nous observons visuellement en @fig-ACP-clusterings une grande similarité entre le clustering par la méthode CAH et celle des Kmeans.
+Ceci est confirmé (sur la même figure) par la proximité des barycentres de la modalité associée à la classe où l'individu est affecté.
+De plus, le Adjusted Rand Index est proche de 1 en @tbl-ari-clusterings.
+Les deux modèles : CAH et Kmeans sont très semblables.
+
+En revanche, le clustering par modèle de mélanges se démarque beaucoup des deux autres.
+Comme l'ARI entre le modèle par mélanges est un peu supérieur avec le clustering de type kmeans qu'avec celui par CAH, nous décidons de comparer plus en détails les clusterings par mélanges et par type Kmeans.
+En @tbl-comparaison_kmeans_mclust nous constatons que le modèle par mélanges se traduit dans le modèle des Kmeans par :
+
+-   deux regroupements de deux classes en une
+
+-   un regroupement de trois classes en une.
+
+Nous retrouvons les mêmes interprétations que @sec-kmeans , avec un regroupement net des individus le splus sportifs et deux autres plus flous entre le reste des individus.
+
+Finalement, nous pretons une attention particulière à l'algorithme de type Kmeans pour déterminer les variables qui ont influencé le clustering.
+Après une analyse sur toutes les variables quantitatives (présente dans le code), nous pouvons voire en @fig-boxblot-kmeans2 que la classe verte se distingue par le nombre de calories brûlées, la durée d'entrainement et le pourcentage de graisse corporelle.
+Encore une fois, nous retrouvons les individus les plus sportifs.
+La classe bleue se démarque de la classe rouge par la variable de poids et d'IMC, les individus les plus lourds appartenant à la classe bleue.
+De plus, en ajoutant l'information des variables qualitatives, présente en @fig-ACP, nous constatons que la classe bleue correspond aux hommes alors que la rouge aux femmes.
+
+```{r}
+#| echo: false
+#| output: true
+#| label: fig-ACP-clusterings
+#| fig-cap: Représentation des clustering 1) par classification hierarchique, 2) méthode des K-means et 3) modèles de mélanges sur le premier plan factoriel puis 4) représentation des barycentres de chaque classe pour chaque méthode. 
+#| fig.pos: 'H'
+#| fig-width: 15
+#| fig-height: 8
+
+
+
+respca <- PCA(donnees_gym_quanti, scale.unit=TRUE, graph=FALSE)
+p1 <- fviz_pca_ind(respca, geom="point", 
+                   habillage=as.factor(clust_cah),
+                   title="1) CAH", label="none",
+                   addEllipses=TRUE)
+
+p2 <- fviz_pca_ind(respca, geom="point", 
+                   habillage=as.factor(clust_kmeans),
+                   title="2) K-means", label="none",
+                   addEllipses=TRUE)
+
+ p3 <- fviz_pca_ind(respca, geom="point", 
+                   habillage=as.factor(clust_mclust),
+                   title="3) Mclust", label="none",
+                   addEllipses=TRUE)
+# Récupérer les coords PCA des individus
+pca_coords <- respca$ind$coord[, 1:2]
+
+# Créer dataframe avec coords + clusters
+data_pca <- data.frame(
+  pca_coords,
+  CAH = clust_cah,
+  Kmeans = clust_kmeans,
+  Mclust = clust_mclust
+)
+
+# projection des classifications dans la MCA
+# Calculer les barycentres dans la PCA
+cah_centers <- aggregate(pca_coords, by = list(clust_cah), FUN = mean)
+cah_centers$Method <- "CAH"
+colnames(cah_centers)[1] <- "Cluster"
+
+km_centers <- aggregate(pca_coords, by = list(clust_kmeans), FUN = mean)
+km_centers$Method <- "Kmeans"
+colnames(km_centers)[1] <- "Cluster"
+
+mc_centers <- aggregate(pca_coords, by = list(clust_mclust), FUN = mean)
+mc_centers$Method <- "Mclust"
+colnames(mc_centers)[1] <- "Cluster"
+
+all_centers <- rbind(cah_centers, km_centers, mc_centers)
+
+# Graphe dans la PCA
+p4 <- ggplot(data_pca, aes(x = Dim.1, y = Dim.2)) +
+  geom_point(alpha = 0.2, size = 1) +
+  geom_point(data = all_centers, aes(color = Method, shape = Method), size = 6) +
+  geom_text(data = all_centers, aes(label = paste(Method, Cluster, sep = "_"), color = Method),
+            vjust = -1, hjust = 0.5, size = 3) +
+  theme_minimal() +
+  labs(title = "4) Centres des 3 clusterings")
+
+plot_grid(p1, p2, p3, p4, ncol=2)+theme_light()
+```
+
+```{r}
+#| echo: false
+#| output: true
+#| label: tbl-comparaison_kmeans_mclust
+#| tbl-cap: Table de contingence entre les clusters obtenus par K-means et par modèles de mélange
+
+contingency_table <- table(Melange = factor(clust_mclust, levels = sort(unique(clust_mclust))),
+                           Kmeans = factor(clust_kmeans, levels = sort(unique(clust_kmeans))))
+
+knitr::kable(contingency_table)
+
+```
+
+```{r}
+#| echo: false
+#| output: true
+#| label: tbl-ari-clusterings
+#| tbl-cap: "Indices de comparaison Adjusted Rand Index entre les méthodes de clustering : Classification Hiérarchique Ascendante, K-means et Modèles de Mélanges."
+
+ari_cah_km <- adjustedRandIndex(clust_cah, clust_kmeans)
+ari_cah_mclust <- adjustedRandIndex(clust_cah, clust_mclust)
+ari_km_mclust <- adjustedRandIndex(clust_kmeans, clust_mclust)
+
+ari_table <- data.frame(
+  Comparaison = c("CAH vs K-means", "CAH vs Mclust", "K-means vs Mclust"),
+  ARI = c(round(ari_cah_km, 3), round(ari_cah_mclust, 3), round(ari_km_mclust, 3))
+)
+
+knitr::kable(ari_table, caption = "ARI entre les méthodes de clustering")
+```
+
+```{r}
+#| echo: false
+#| output: false
+#| label: fig-boxblot-kmeans
+#| fig-cap: répartition du nombre de calories brûlées selon la classe du clustering Kmeans 
+#| fig-width: 15
+#| fig-height: 5
+#| fig.pos: 'H'
+
+df_boxplot <- data.frame(donnees_gym_quanti, Cluster = as.factor(clust_kmeans))
+df_long <- melt(df_boxplot, id = "Cluster")
+
+boxplot_calories <- ggplot(df_long[df_long$variable == "calories", ],
+                            aes(x = variable, y = value, fill = Cluster)) +
+  geom_violin() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1)) +
+  labs(title = "Violin plot pour 'calories'")
+
+
+vars_group1 <- c(1, 2, 4, 7, 9) 
+df_group1 <- df_long[df_long$variable %in% names(donnees_gym_quanti)[vars_group1], ]
+
+boxplot_1 <- ggplot(df_group1, aes(x = variable, y = value, fill = Cluster)) +
+  geom_violin() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1)) +
+  labs(title = "Violin plots - Groupe 1")
+
+vars_group2 <- c(3, 5, 8)  
+df_group2 <- df_long[df_long$variable %in% names(donnees_gym_quanti)[vars_group2], ]
+
+boxplot_2 <- ggplot(df_group2, aes(x = variable, y = value, fill = Cluster)) +
+  geom_violin() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1)) +
+  labs(title = "Violin plots - Groupe 2")
+
+plot_grid(boxplot_calories, boxplot_1, boxplot_2, ncol = 3, nrow = 1)+ theme_light()
+```
+
+```{r}
+#| echo: false
+#| output: true
+#| label: fig-boxblot-kmeans2
+#| fig-cap: répartition de variables selon la classe du clustering Kmeans 
+#| fig-width: 15
+#| fig-height: 5
+#| fig.pos: 'H'
+
+df_boxplot <- data.frame(donnees_gym_quanti, Cluster = as.factor(clust_kmeans))
+df_long <- melt(df_boxplot, id = "Cluster")
+
+boxplot_calories <- ggplot(df_long[df_long$variable == "calories", ],
+                            aes(x = variable, y = value, fill = Cluster)) +
+  geom_violin(show.legend = FALSE) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1)) 
+
+vars_group1 <- c(2) 
+df_group1 <- df_long[df_long$variable %in% names(donnees_gym_quanti)[vars_group1], ]
+
+boxplot_1 <- ggplot(df_group1, aes(x = variable, y = value, fill = Cluster)) +
+  geom_violin(show.legend = FALSE) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1)) 
+
+vars_group3 <- c(7, 9) 
+df_group3 <- df_long[df_long$variable %in% names(donnees_gym_quanti)[vars_group3], ]
+
+boxplot_3 <- ggplot(df_group3, aes(x = variable, y = value, fill = Cluster)) +
+  geom_violin(show.legend = FALSE) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1)) 
+
+
+vars_group2 <- c(5) 
+df_group2 <- df_long[df_long$variable %in% names(donnees_gym_quanti)[vars_group2], ]
+
+boxplot_2 <- ggplot(df_group2, aes(x = variable, y = value, fill = Cluster)) +
+  geom_violin() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1)) 
+
+plot_grid(boxplot_calories, boxplot_1, boxplot_3, boxplot_2, ncol = 4, nrow = 1)+ theme_light()
+```
+
+Suite à ces trois méthodes de clustering, nous arrivons à  identifier trois groupes homogènes d’individus.
+Le premier se différencie par les variables liées aux habitudes d'entraînement, ce sont les individus les plus sportifs.
+Les deux autres se distinguent par les variables liées aux attributs physiques.
+
+# Etude du nombre de calories brulées
+
+## Régression linéaire multiple
+
+Pour analyser le nombre de calories brûlées, nous cherchons à exprimer du mieux possible cette variable en fonction des variables explicatives liées aux caractéristiques physiques et paramètres de l’activité physique.
+Nous commençons par évaluer l’effet de chaque variable quantitative en supposant une relation linéaire et additive entre les variables explicatives et la variable cible ; ainsi que des résidus indépendants et homoscédastiques.
+Nous réalisons donc un modèle de régression linéaire multiple.
+Ce dernier s’écrit : $$
+\text{calories} = \theta_0 + \theta_1 \cdot \text{weight} + \theta_2 \cdot \text{height} + \theta_3 \cdot \text{bpmave} + \theta_4 \cdot \text{duration} + \theta_5 \cdot \text{fat} + \theta_6 \cdot \text{water} + \theta_7 \cdot \text{freq} + \theta_8 \cdot \text{bmi} + \epsilon
+$$
+
+```{r}
+#| echo: false
+#| output: true
+#| label: code-regmul1
+#| fig.pos: 'H'
+
+quant_vars <- c("age","weight","height","bpm_ave","duration","fat","water","bmi")
+
+reg.mul <- lm(calories ~ ., data = Sport[, c("calories", quant_vars)])
+summary(reg.mul)
+```
+
+D'après les tests de Student sur la nullité des paramètres, toutes les variables semblent importantes pour le modèle.
+Elles apportent donc de l'information utile pour exprimer le nombre de calories brûlées.
+Cependant, comme l'illustre la @fig-regmul, l’examen des résidus montre que le modèle linéaire ne capture pas entièrement certaines relations.
+Il y a probablement une non linéarité, entre les variables explicatives et la dépense calorique.
+Nous décidons alors d'essayer de réduire le biais du modèle en utilisant un modèle quadratique : $$
+\text{calories} = \theta_0 + \theta_1 \cdot \text{weight}^2 + \theta_2 \cdot \text{height}^2 + \theta_3 \cdot \text{bpmave}^2 + \theta_4 \cdot \text{duration}^2 + \theta_5 \cdot \text{fat}^2 + \theta_6 \cdot \text{water}^2 + \theta_7 \cdot \text{freq}^2 + \theta_8 \cdot \text{bmi}^2 + \epsilon
+$$
+
+```{r}
+#| echo: false
+#| output: false
+#| label: code-regmul2
+#| fig.pos: 'H'
+
+# modèle quadratique
+reg.mul2 <- lm(calories ~ .^2, data = Sport[, c("calories", quant_vars)])
+summary(reg.mul2)
+autoplot(reg.mul2 ,which=c(1,2,3,4),label.size=2)+ theme_light()  
+
+
+```
+
+Nous comparons alors pour chcun des deux modèles précédents la validité ou non des hypothèses sur les résidus.
+
+-   **H1 : Espérance nulle des erreurs**\
+    $$
+    \mathbb{E}[\varepsilon] = 0
+    $$\
+    Sur la figure @fig-regmul, la forme en banane des résidus suggère une relation non linéaire entre la variable traduisant le nombre de calories brûlées et certaines variables explicatives.
+    L’espérance conditionnelle des erreurs n’est donc pas correctement modélisée.
+    Cette tendance est atténuée pour le modèle quadratique.
+
+    ```{r}
+    #| echo: false
+    #| output: true
+    #| label: fig-regmul
+    #| fig-cap: graphes des résidus pour la régression linéaire multiple (gauche) et la régression quadratique multiple (droite)
+    #| fig.pos: 'H'
+
+    autoplot(reg.mul ,which=c(1),label.size=2)+ theme_light() + autoplot(reg.mul2 ,which=c(1),label.size=2)+ theme_light()
+    ```
+
+-   **H2 : Homoscédasticité**\
+    $$
+    \mathrm{Var}(\varepsilon) = \sigma^2
+    $$\
+    Sur la figure @fig-scales, nous observons une forme en trompette, ce qui traduit que la variance des erreurs varie selon les valeurs ajustées.
+    Il y a hétéroscédasticité.
+
+    ```{r}
+    #| echo: false
+    #| output: true
+    #| label: fig-scales
+    #| fig-cap: graphes des scales locations pour la régression linéaire multiple (gauche) et la régression quadratique multiple (droite)
+    #| fig.pos: 'H'
+
+    autoplot(reg.mul ,which=c(3),label.size=2)+ theme_light() + autoplot(reg.mul2 ,which=c(3),label.size=2)+ theme_light()
+
+    ```
+
+-   **H3 : Indépendance des erreurs**\
+    $$
+    \mathrm{Cov}(\varepsilon_i, \varepsilon_j) = 0, \quad i \neq j
+    $$\
+    D’après la figure @fig-regmul, aucune structure systématique n’est observée, suggérant que l’indépendance des erreurs est globalement respectée.
+
+-   **H4 : Normalité des erreurs**\
+    $$
+    \varepsilon \sim \mathcal{N}(0, \sigma^2)
+    $$\
+    D’après le QQ-plot en @fig-qqplot, certains écarts par rapport à la diagonale indiquent que la normalité des erreurs n’est pas parfaitement respectée, surtout pour les valeurs extrêmes.
+    Cette tendance est moins marquée pour le modèle quadratique.
+
+```{r}
+#| echo: false
+#| output: true
+#| label: fig-qqplot
+#| fig-cap: graphes des QQ-plots pour la régression linéaire multiple (gauche) et la régression quadratique multiple (droite)
+#| fig.pos: 'H'
+
+autoplot(reg.mul ,which=c(2),label.size=2)+ theme_light() + autoplot(reg.mul2 ,which=c(2),label.size=2)+ theme_light()
+
+```
+
+Ainsi, le modèle quadratique corrige les tendances du modèle additif.
+
+## ANOVA à 2 facteurs
+
+Nous réalisons une deuxième modélisation des calories brûlées en nous focalisons sur des variables explicatives qualitatives : le type de sport et le niveau.
+Nous mettons en place un modèle ANOVA à 2 facteurs.
+
+```{r}
+#| echo: false
+#| output: true
+#| label: fig-interractions
+#| fig-cap: graphes des interractions
+#| fig.pos: 'H'
+
+plot_grid(
+  ggplot(Sport, aes(x=type, y=calories, group=level, color=level)) +
+    stat_summary(fun.data=mean_se, geom="line") +
+    stat_summary(fun.data=mean_se, geom="point") +
+    labs(title="Interaction plot", x="Type", y="Calories") +
+    theme_minimal() +
+    theme(axis.text.x = element_text(angle=45, hjust=1, size=8)),
+  ggplot(Sport, aes(x=level, y=calories, group=type, color=type)) +
+    stat_summary(fun.data=mean_se, geom="line") +
+    stat_summary(fun.data=mean_se, geom="point") +
+    labs(title="Interaction plot", x="Level", y="Calories") +
+    theme_minimal(),
+  ncol = 2
+)+ theme_light()
+```
+
+D'après les graphes @fig-interractions, les courbes ne sont pas parallèles, nous choisissons alors un modèle avec interractions.
+Nous utilisons le modèle singulier avec les contraintes par défault de R *id* *est* de nullité sur les paramètres associés au niveau 1 et au type Cardio.
+
+```{r}
+#| echo: false
+#| output: true
+#| label: code-anova2w
+#| fig.pos: 'H'
+anova_sans_interaction <- lm(calories ~ level + type, data = Sport)
+anova_2w <- lm(calories ~ level * type, data = Sport)
+summary(anova_2w)
+```
+
+D'après les résultats de R, l’intercept de ce modèle est estimé à environ 706 calories, avec une p-valeur extrêmement faible (\< 2e-16).
+On peut donc considérer que la dépense énergétique moyenne d’une séance de cardio pour un débutant est de 706 calories indépendemment des autres paramètres.
+
+Les résultats montrent que le niveau d’expérience a un effet très significatif sur le nombre de calories brûlées (p-valeurs \< 2e-16) : Une personne de niveau 3 depensera 282 calories en plus qu'une personne de niveau 2 s'ils sont égaux au niveau de tous les autres paramètres.
+
+En revanche, le type d’activité (HIIT, musculation ou yoga), comparé au cardio, n’a pas d’effet significatif sur la dépense calorique (p-valeurs \> 5 %).
+Cela suggère qu’à intensité équivalente, le type d’entraînement influence peu la dépense énergétique.
+On remarque, néanmoins une différence entre le type yoga et le type force : une personne avec le type force brulera en moyenne 44 calories en plus, ce qui est logique.
+
+Enfin, le modèle présente un coefficient de détermination (R²) d’environ 50 %, ce qui est raisonnable compte tenu du fait qu’il repose uniquement sur deux variables qualitatives.
+Cela indique que le niveau d’intensité constitue le principal facteur déterminant des calories brûlées, tandis que le type d’activité joue un rôle marginal.
+
+Comme les calories dépendent fortement de la variable niveau, nous allons vérifier si on peut faire l'hypothèse d'un modèle sans intéractions:
+
+Pour cela on va comparer les 2 modèles suivants:
+
+$$
+\begin{aligned}
+\text{(H0) :} \quad  
+\text{calories}_i &= \beta_0 + \sum_{j=2}^{3} \beta_j \, \text{niveau}_{ij} + \sum_{k=2}^{3} \gamma_k \, \text{type}_{ik} + \varepsilon_i, 
+\quad \varepsilon_i \sim \mathcal{N}(0, \sigma^2)
+\end{aligned}
+$$
+
+$$
+\begin{aligned}
+\text{(H1) :} \quad & 
+\text{calories}_i = \beta_0 + \sum_{j=2}^{3} \beta_j \, \text{niveau}_{ij} + \sum_{k=2}^{3} \gamma_k \,\text{type}_{ik} + \sum_{j=2}^{3} \sum_{k=2}^{3} \delta_{jk} \, (\text{niveau}_{ij} \cdot \text{type}_{ik}) + \varepsilon_i, 
+ \quad \varepsilon_i \sim \mathcal{N}(0, \sigma^2)
+\end{aligned}
+$$
+
+Le modèle (M0) est bien un sous modèle de (M1)
+
+```{r}
+#| echo: false
+#| output: true
+#| label: comparaison modèle avec et sans intéractions
+#| fig.pos: 'H'
+anova(anova_sans_interaction,anova_2w)
+```
+
+La comparaison entre le modèle incluant les interactions et celui sans interactions donne une p-valeur de 0,24 (\> 5 %).
+Cela conduit à accepter l’hypothèse d’un modèle sans interactions, indiquant que l’effet combiné des deux variables n’apporte pas d’information supplémentaire significative.
+
+Suite à cette modélisation, la nullité de nombreux paramètres est acceptée par le test de Student, il est alors judicieux de penser à une simplification du modèle.
+
+## ANCOVA et sélection de modèle
+
+Nous réalisons une troisième modélisation des calories brûlées selon toutes nos variables puis cherchons à simplifier le modèle.
+Bien que plusieurs méthodes aient été codées, nous gardons le modèle le plus simple, obtenu en minimisant le critère BIC (cf @fig-selectionBIC).
+
+```{r}
+#| echo: false
+#| output: false
+#| label: code-ancova2w
+#| fig.pos: 'H'
+
+ancova <- lm(calories ~ ., data = Sport)
+choix=regsubsets(calories~., data=Sport, nbest=1, nvmax=13, method="backward")
+
+plot(choix, scale="Cp")
+plot(choix, scale="adjr2")
+
+stepAIC(lm(calories ~ ., data = Sport), direction="backward")
+anova(ancova, lm(calories ~ age + gender + weight + height + bpm_ave + 
+    duration + bmi, data = Sport))
+```
+
+```{r}
+#| echo: false
+#| output: true
+#| label: fig-selectionBIC
+#| fig.pos: 'H'
+#| 
+plot(choix, scale="bic")+ theme_light()
+```
+
+```{r}
+#| echo: false
+#| output: true
+#| label: fig-analysisBIC
+
+mod_bic <- lm(calories ~ age + gender + bpm_ave + duration, data = Sport)
+anova(ancova, mod_bic)
+
+```
+
+```{r}
+#| echo: false
+#| output: true
+#| label: fig-residusBIC
+#| fig.pos: 'H'
+#| fig-cap: graphes des résidus pour le modèle simplifié par sélection BIC
+
+autoplot(mod_bic ,which=c(1),label.size=2)+ theme_light()
+
+```
+
+D'après le test de Fisher réalisé, le sous modèle
+
+$$
+\begin{aligned}
+\text{calories}
+&= \theta_0
++ \theta_1 \cdot \text{age}
++ \theta_2 \cdot \text{bpmave}
++ \theta_3 \cdot \text{duration} 
+ + \alpha_{\text{genderMale}}
++ \alpha_{\text{genderFemale}}
++ \varepsilon
+\end{aligned}
+$$
+
+est accepté au niveau 5%.
+Cependant, d'après la @fig-residusBIC, le modèle est biaisé.
+Le biais persiste malgré l'acceptation statistique: le test F compare la perte d'information globale entre le modèle complet et le modèle simplifié.
+Une p-valeur \> 0,05 indique que cette perte est négligeable statistiquement.
+Cependant, cela ne garantit pas que la relation entre les variables et les calories soit purement linéaire.
+Le modèle est améliorable.
+Pour corriger ce biais, il faudrait réintroduire les interactions d'ordre 2 majeures identifiées dans le modèle interactif complet (notamment "duration × bpm_ave").
+Cela augmenterait le R\^2 de 98,39% à environ 98,5% en éliminant la tendance résiduelle, tout en conservant un modèle relativement simple comparé aux 36 interactions initiales.
+
+Le compromis serait donc : \~28-30 variables (avec les interactions clés) pour un ajustement sans biais.
+
+## Modèle complet avec intéraction d'ordre 2
+
+Nous allons tester le modèle additif contre le modèle avec interactions d'ordre 2.
+
+(H0) : modèle additif
+
+$$
+\text{calories}_i = \theta_0 
++ \theta_1 \cdot \text{weight}_i 
++ \theta_2 \cdot \text{height}_i 
++ \theta_3 \cdot \text{bpmave}_i 
++ \theta_4 \cdot \text{duration}_i 
++ \theta_5 \cdot \text{fat}_i 
++ \theta_6 \cdot \text{water}_i 
++ \theta_7 \cdot \text{freq}_i 
++ \theta_8 \cdot \text{bmi}_i 
++ \epsilon_i, 
+\quad \epsilon_i \sim \mathcal{N}(0, \sigma^2)
+$$
+
+(H1) : modèle complet avec interactions d'ordre 2
+
+$$
+\text{calories}_i = \theta_0 
++ \sum_{j=1}^{8} \theta_j X_{ij} 
++ \sum_{j=1}^{8} \sum_{k=j}^{8} \theta_{jk} (X_{ij} \cdot X_{ik}) 
++ \epsilon_i, 
+\quad \epsilon_i \sim \mathcal{N}(0, \sigma^2)
+$$
+
+avec
+
+$$
+X_{ij} \in \{\text{weight}, \text{height}, \text{bpmave}, \text{duration}, \text{fat}, \text{water}, \text{freq}, \text{bmi}\}.
+$$
+
+```{r}
+#| echo: false
+#| output: false
+#| label: Ancova avec selection de modele code
+#| fig.pos: 'H'
+
+ancova <- lm(calories ~ .^2, data = Sport)
+choix=regsubsets(calories~.^2, data=Sport, nbest=1, nvmax=13, method="backward")
+
+plot(choix, scale="Cp")
+plot(choix, scale="adjr2")
+
+stepAIC(lm(calories ~ .^2, data = Sport), direction="backward")
+
+
+```
+
+```{r}
+#| echo: false
+#| output: true
+#| fig-cap: graphes des résidus pour le modèle simplifié par sélection BIC
+#| label: fig-CDF
+#| fig.pos: 'H'
+
+anova(ancova, lm(calories ~ age + gender + weight + height + bpm_ave + 
+    duration + bmi, data = Sport))
+plot(choix, scale="adjr2")
+
+```
+
+D'après @fig-CDF, nous constatons que le modèle avec intéractions possède un coefficient de détermination proche de (0.99) après simplification.
+Certaines intéractions sont plus importantes que d'autres.
+
+Ce modèle est bien plus performant que le modele additif.
+La pvaleur est inférieure à 0.05: On rejette l'hypothèse de sous modèle H0.
+Néanmoins, ce modèle est aussi beaucoup plus complexe avec plus de 100 variables.
+
+# Etude du niveau d’expérience
+
+Nous avons vu dans l'étude du nombre de calories brulées que la niveau de l'individu expliquait bien cette variable.
+Ceci nous pousse à voir alors l'effet du niveau d'expérience sur l'ensemble de nos paramètres.
+
+## Création de la variable levelBis
+
+La variable *level* comporte trois modalités ordinales : débutant (1), intermédiaire (2) et expert (3).
+La table de contingence entre les variables niveau et fréquence @fig-corrplot nous a montré qu'il y avait moins d'individus de niveau 3 (191 individus) que les niveaux 1 et 2 (376 et 406 respectivement).
+
+Afin de simplifier l’analyse et de travailler dans un cadre de **régression logistique**, nous regroupons les niveaux 2 et 3 en une seule catégorie correspondant aux pratiquants non débutants.
+
+La variable binaire *levelBis* est alors définie par :
+
+$$
+\text{levelBis} =
+\begin{cases}
+0 & \text{si level = 1} \\
+1 & \text{si level = 2  ou 3}
+\end{cases}
+$$\
+
+```{r}
+# Création de la nouvelle table avec 2 levels
+  Table_nolevel=read.table("DataGym-projet4modIA-2526.csv",header=T)
+  Table_nolevel$levelBis <- ifelse(Table_nolevel$level == 1, 0, 1)
+  Table_nolevel$levelBis <- as.factor(Table_nolevel$levelBis)
+  
+
+  Table_nolevel$level <- NULL
+
+```
+
+## Modèle complet
+
+On suppose que les variables $levelBis_i$ sont indépendantes et identiquement distribuées.
+Ainsi, elles suivent chacune la loi de Bernoulli de paramètre $\pi_i$ = $\left(P(\text{levelBis}_i=1 \mid \boldsymbol{\theta})\right)$
+
+Afin d’étudier formellement l’effet de l’ensemble des variables sur levelBis, nous ajustons un modèle logistique complet incluant toutes les variables quantitatives et qualitatives.
+Le modèle complet est formellement défini par :
+
+$$
+\begin{aligned}
+\text{logit}\!\left(P(\text{levelBis}=1 \mid \boldsymbol{\theta})\right)
+&= \theta_0
++ \theta_1 \cdot \text{age}
++ \theta_2 \cdot \text{weight}
++ \theta_3 \cdot \text{height}
++ \theta_4 \cdot \text{bpmave} \\
+&\quad + \theta_5 \cdot \text{duration}
++ \theta_6 \cdot \text{calories}
++ \theta_7 \cdot \text{fat}
++ \theta_8 \cdot \text{water} \\
+&\quad + \theta_9 \cdot \text{bmi}
++ \theta_{10} \cdot \text{gender}_{\text{female}}
++ \theta_{11} \cdot \text{type}_{\text{Cardio}} \\
+&\quad + \theta_{12} \cdot \text{type}_{\text{Strength}}
++ \theta_{13} \cdot \text{type}_{\text{Yoga}} \\
+&\quad + \theta_{14} \cdot \text{freq}_{2}
++ \theta_{15} \cdot \text{freq}_{3}
++ \theta_{16} \cdot \text{freq}_{4}
++ \theta_{17} \cdot \text{freq}_{5}
+\end{aligned}
+$$
+
+```{r}
+#| echo: false
+#| output: true
+#| label: tbl-logitfull
+#| fig.pos: 'H'
+Table_nolevel$freq <- as.factor(Table_nolevel$freq)
+
+
+model_full <- glm(levelBis ~ ., data = Table_nolevel, family = binomial)
+
+
+logit_full_tab <- broom::tidy(model_full, exponentiate = TRUE, conf.int = FALSE)
+
+knitr::kable(logit_full_tab, digits = 3, caption = "Résumé du modèle logistique complet")
+```
+
+La sortie du modèle complet (@tbl-logitfull) indique que, **prises individuellement**, les variables ne sont pas toutes significatives.
+Toutes les variables ont des pvaleurs superieur à 0.3 pour les tests de nullités ce qui suggère qu'il n y a aucune variable indispensable pour expliquer la variable levelBis.
+Ensuite nous pouvons constater que la déviance nulle est bien plus élevée que la déviance résiduelle (1298 \> 414) représentant l'erreur du modèle sans aucun prédicteur.
+Cela suggère que les variables expliquent globalement très bien le niveau d'expérience meme si pris individuellement ce n'est pas pertinent
+
+On constate que les modalités de la variable fréquence admettent des estimateurs très élevées (supérieur à 10e8) ce qui suggère que la variable fréquence explique très bien levelBis.
+Les pvaleurs des modalités de la variable fréquence sont étonemment proche de 1, ceci peut etre dû à leur grande variance (10e3)
+
+L'intercept semble avoir une variance très élevée en raison de la variable freq2 qui a dû largement impacté sur ce dernier.
+Aussi, on remarque que les freq4 et freq5 (10e17) ont une estimation beaucoup plus élevé que la freq3 (10e8), ceci peut etre expliqué par une meilleur explication de la variable levelBis par la freq3.
+
+Nous avons donc tracé la @fig-levelbis-freq pour essayer de voir l'impact de la variable fréquence sur levelbis.
+
+```{r}
+#| echo: false
+#| output: true
+#| label: fig-levelbis-freq
+#| fig-cap: Proportion de pratiquants débutants et non débutants
+#| fig.pos: 'H'
+
+
+frequence <- ggplot(Table_nolevel, aes(x = freq, fill = levelBis)) +
+  geom_bar(position = "fill", color = "black") +
+  geom_text(
+    stat = "count",
+    aes(label = after_stat(count)),
+    position = position_fill(vjust = 0.5),
+    color = "white",
+    size = 3
+  ) +
+  scale_y_continuous(labels = scales::percent_format()) +
+  labs(
+    x = "fréquence",
+    y = "Proportion",
+    fill = "LevelBis"
+  ) +
+  theme_minimal(base_size = 13)
+plot_grid(frequence, ncol = 1, nrow = 1)+ theme_light()
+```
+
+Nous observons que pour les frequences 2, 4 et 5, les deux niveaux sont bien séparés par les fréquences.
+Pour la fréquence 3, nous sommes moins sûrs de la séparation.
+
+Pour améliorer l’interprétabilité du modèle tout en conservant sa capacité discriminante, nous appliquons une **procédure de sélection de modèle basée sur l’AIC et le BIC**.
+
+## Modèle simplifié par critère AIC/BIC
+
+Pour que notre modèle reste clair et utile, il est préférable de ne pas garder toutes les variables.
+Certaines apportent très peu d’information et compliqueraient juste l’interprétation.
+
+Pour cette raison, nous avons utilisé une **sélection basée sur l’AIC**, qui permet de trouver un compromis entre la précision du modèle et sa simplicité.
+Cette méthode nous aide à conserver uniquement les variables qui contribuent vraiment à prédire `levelBis`, tout en éliminant celles qui sont redondantes ou peu informatives.
+
+Le modèle simplifié peut s’écrire comme :
+
+$$
+\text{logit}(\Pr(\text{levelBis}=1))
+=
+\theta_0
++ \theta_1\,\text{duration}
++ \theta_2\,\text{freq}_2
++ \theta_3\,\text{freq}_3
++ \theta_4\,\text{freq}_4
++ \theta_5\,\text{freq}_5
+$$
+
+avec $\theta_2$ = 0 prise comme valeur de référence
+
+```{r}
+#| label: tbl-logit-selection-final
+#| echo: false
+#| output: false
+#| fig-cap: "Résumé du modèle logistique final après sélection (AIC)"
+#| fig.pos: 'H'
+
+model_aic <- step(model_full, direction = "backward", k = 2, trace = 0)
+
+summary_final <- summary(model_aic)
+summary_final
+final_tab <- data.frame(
+  Variable = rownames(summary_final$coefficients),
+  Estimate = summary_final$coefficients[, "Estimate"],
+  `Std. Error` = summary_final$coefficients[, "Std. Error"],
+  `z value` = summary_final$coefficients[, "z value"],
+  `Pr(>|z|)` = summary_final$coefficients[, "Pr(>|z|)"]
+)
+
+
+```
+
+Le modèle sélectionné inclut uniquement les variables **duration** et **freq**, qui apparaissent comme les plus discriminantes.
+
+Nous constatons que les critères AIC et BIC nous donnent exactement les memes résultats.
+L'algorithme a successivement supprimé plusieurs variables pour finalement nous laisser uniquement les variables fréquences et duration à la fin.
+Nous constatons que le AIC du modèle complet (448) est plus élevé que le AIC du modèle séléctionné (430).
+
+\vspace{2cm}
+
+```{r}
+#| label: table du résumé
+#| echo: false
+#| output: true
+#| fig.pos: 'H'
+knitr::kable(final_tab, digits = 3, caption = "Résumé du modèle logistique final après sélection (AIC)")
+```
+
+En examinant les résultats du modèle simplifié, nous constatons que les variables liées à la fréquence (`freq3`, `freq4`, `freq5`) présentent toujours des **erreurs standards extrêmement élevées**.
+Ceci traduit une grande incertitude dans l’estimation de leurs paramètres et limite leur utilité dans le modèle.
+
+En revanche, la variable `duration` est **très bien estimée** : son coefficient est clairement différent de zéro, son erreur standard est faible, et le test de nullité est fortement significatif (`p < 0.05`).
+Cela indique que la durée est une variable **très discriminante** pour prédire `levelBis` et que son effet est estimé de manière robuste.
+
+Le modèle simplifié met en évidence que **la durée est le prédicteur principal**, tandis que les fréquences restent problématiques à cause de la grande variabilité de leurs estimations, ce qui peut avoir un impact important sur la stabilité et l’interprétation du modèle.
+
+```{r}
+#| echo: false
+#| output: true
+#| label: fig-levelbis-duration
+#| fig-cap: Distribution de la durée des séances selon le niveau d'expérience
+#| fig.pos: 'H'
+
+duration <- ggplot(Table_nolevel, aes(x = levelBis, y = duration, fill = levelBis)) +
+  geom_violin(trim = FALSE, alpha = 0.6) +
+  geom_boxplot(width = 0.15, fill = "white", outlier.shape = NA) +
+  labs(
+    x = "Niveau d'expérience",
+    y = "Durée des séances (heures)"
+  ) +
+  theme_light(base_size = 13) + 
+  theme(legend.position = "none")
+plot_grid(duration, ncol = 1, nrow = 1)+ theme_light()
+
+```
+
+La @fig-levelbis-duration montre la distribution de la durée des séances selon le niveau d'expérience.
+Les boxplots sont bien séparés : les participants de niveau élevé ont des séances généralement plus longues que ceux de niveau faible.
+Les violons indiquent que les observations se concentrent autour de valeurs distinctes selon le niveau, suggérant une séparation nette entre les deux groupes.
+
+L’interprétation de ce modèle sélectionné montre que **la durée des séances joue un rôle central** dans la distinction entre débutants et non débutants, tandis que la fréquence hebdomadaire apporte une **information complémentaire**, mais moins discriminante.
+Les autres variables, bien que présentes dans le modèle complet, contribuent peu individuellement à la discrimination et peuvent être omises pour obtenir un modèle plus parcimonieux et interprétable.
+
+Ces résultats confirment que la durée est un prédicteur fiable du niveau d'expérience.
+Dans le modèle logistique simplifié, son coefficient est estimé avec une faible erreur standard et un test très significatif (p \< 0,05).
+En revanche, les variables liées à la fréquence restent difficiles à interpréter à cause de leurs erreurs standards élevées.
+Le graphique illustre visuellement que la durée est le prédicteur le plus stable et informatif.
+
+## Tests de sous modèles
+
+Pour compléter l’analyse basée sur le critère AIC, il est important de vérifier que le modèle simplifié retenu, incluant uniquement `duration` et `freq`, capture bien l’essentiel de l’information présente dans la variable réponse.
+Pour cela, nous comparons plusieurs modèles emboîtés à l’aide d’**ANOVA**, afin de déterminer si l’ajout ou la suppression de certaines variables entraîne une amélioration significative de l’ajustement.
+Ces comparaisons permettent de confirmer que le modèle simplifié est suffisant et qu’aucune des autres variables présentes dans le modèle complet n’apporte une contribution discriminante notable.
+Cette étape sert donc à valider quantitativement le choix d’un modèle **parcimonieux et interprétable**, tout en vérifiant que l’information clé reste capturée de manière fiable.
+
+On note $\pi_i = \Pr(\text{levelBis}_i = 1)$ et $\text{logit}(\pi_i) = \log\!\left(\frac{\pi_i}{1-\pi_i}\right)$.$$
+\mathcal{M}_1 :
+\quad
+\text{logit}(\pi_i)
+=
+\theta_0
++ \sum_{k=2}^{5} \theta_k\,\text{freq}_{k,i}
+$$
+
+$$
+\mathcal{M}_2 :
+\quad
+\text{logit}(\pi_i)
+=
+\theta_0
++ \theta_1\,\text{duration}_i
+$$
+
+$$
+\mathcal{M}_3 :
+\quad
+\text{logit}(\pi_i)
+=
+\theta_0
++ \theta_1\,\text{duration}_i
++ \sum_{k=2}^{5} \theta_k\,\text{freq}_{k,i}
+$$
+
+$$
+\mathcal{M}_4 :
+\quad
+\text{logit}(\pi_i)
+=
+\theta_0
++ \boldsymbol{x}_i^\top \boldsymbol{\theta}
+$$
+
+Nous allons faire les comparaisons suivantes: $\mathcal{M}_1$ vs $\mathcal{M}_3$, $\mathcal{M}_2$ vs $\mathcal{M}_3$, et $\mathcal{M}_3$ vs $\mathcal{M}_4$.
+
+```{r}
+#| label: tests modeles
+#| echo: false
+#| output: true
+#| fig.pos: 'H'
+
+ model_fin<- glm(levelBis ~ freq, data = Table_nolevel, family = binomial)
+ model_fin1<- glm(levelBis ~ freq+duration, data = Table_nolevel, family = binomial)
+ model_fin2<- glm(levelBis ~ duration, data = Table_nolevel, family = binomial)
+extract_lrt <- function(model1, model2, label){
+  a <- anova(model1, model2, test="Chisq")
+  a <- as.data.frame(a)
+  a <- a[nrow(a), , drop=FALSE]  # dernière ligne seulement
+  a$Comparison <- label
+  return(a)
+}
+
+lrt1 <- extract_lrt(model_fin, model_fin1, "freq vs freq+duration")
+lrt2 <- extract_lrt(model_fin1, model_full, "freq+duration vs full")
+lrt3 <- extract_lrt(model_fin2, model_fin1, "duration vs freq+duration")
+
+lrt_tab <- bind_rows(lrt1, lrt2, lrt3)
+
+lrt_tab <- lrt_tab %>%
+  select(
+    Comparison,
+    `Diff. df` = Df,
+    `Diff. Deviance` = Deviance,
+    `p-value` = `Pr(>Chi)`
+  ) %>%
+  mutate(Result = ifelse(`p-value` < 0.05, "Rejeté", "Accepté"))
+
+knitr::kable(
+  lrt_tab,
+  digits = 4,
+  caption = "Tests du rapport de vraisemblance pour la comparaison des modèles"
+)
+```
+
+-   La comparaison entre le modèle incluant uniquement la fréquence (`freq`) et celui incluant freq + duration montre une p-valeur très faible, ce qui indique que le modèle simple avec `freq` seul est rejeté au profit du modèle incluant également la durée des séances.
+
+    La comparaison entre le modèle freq + duration et le modèle complet incluant toutes les variables montre une p-valeur élevée, ce qui signifie que l’ajout des autres variables n’améliore pas significativement l’ajustement.
+    Nous acceptons donc le modèle intermédiaire `freq + duration`.
+
+    Enfin, le modèle incluant uniquement la durée (`duration`) est rejeté lorsqu’on le compare au modèle `freq + duration`, ce qui confirme que la fréquence apporte une information complémentaire.
+
+Ainsi, le modèle retenu inclut `duration` et `freq`, la durée des séances jouant un rôle central dans la distinction entre débutants et non débutants, tandis que la fréquence hebdomadaire apporte une information secondaire mais utile.
+
+## Modèles sur le sous-groupe freq3
+
+Pour approfondir notre analyse et confirmer l’importance de la durée, nous avons ajusté un modèle logistique uniquement sur les participants du sous-groupe `freq3`.
+
+```{r}
+#| label: table_freq3_duration
+#| echo: false
+#| output: true
+#| fig.pos: 'H'
+
+
+Table_freq3 <- Table_nolevel %>% filter(freq == 3)
+
+model_freq3 <- glm(levelBis ~ duration, data = Table_freq3, family = binomial)
+
+freq3_tab <- broom::tidy(model_freq3, exponentiate = TRUE, conf.int = TRUE)
+
+knitr::kable(freq3_tab, digits = 3, caption = "Résumé du modèle logistique pour le sous-groupe freq3")
+
+
+```
+
+Les résultats montrent que le coefficient de `duration` est fortement significatif (p \< 0,05) et positif, ce qui indique que, même pour ce niveau de fréquence, des séances plus longues augmentent fortement la probabilité d’être dans le groupe d’expérience élevé.
+L’intervalle de confiance associé à ce coefficient est étroit, ce qui confirme que l’effet de la durée est estimé de manière robuste.
+
+Ainsi, cette analyse renforce l’idée que la durée est un prédicteur clé du niveau d’expérience, indépendamment de la fréquence hebdomadaire.
+
+## Modèles sans la variable fréquence
+
+Nous essayons de voir comment se comporte notre modèle si on ne prenait pas en compte la variable fréquence dans notre modèle généralisé :
+
+$$
+\begin{aligned}
+\text{logit}\!\left(P(\text{levelBis}=1 \mid \boldsymbol{\theta})\right)
+&= \theta_0
++ \theta_1 \cdot \text{age}
++ \theta_2 \cdot \text{weight}
++ \theta_3 \cdot \text{height}
++ \theta_4 \cdot \text{bpmave} \\
+&\quad + \theta_5 \cdot \text{duration}
++ \theta_6 \cdot \text{calories}
++ \theta_7 \cdot \text{fat}
++ \theta_8 \cdot \text{water} \\
+&\quad + \theta_9 \cdot \text{bmi}
++ \theta_{10} \cdot \text{gender}_{\text{female}}
++ \theta_{11} \cdot \text{type}_{\text{Cardio}} \\
+&\quad + \theta_{12} \cdot \text{type}_{\text{Strength}}
++ \theta_{13} \cdot \text{type}_{\text{Yoga}} \\
+\end{aligned}
+$$
+
+```{r}
+#| label: table_freq2_duration
+#| echo: false
+#| output: false
+#| fig-cap: "Résumé du modèle logistique pour le sous-groupe freq3"
+#| fig.pos: 'H'
+
+
+Table_freq3 <- Table_nolevel %>% filter(freq == 3)
+Table_freq3$freq <- NULL
+
+model_freq3 <- glm(levelBis ~ ., data = Table_freq3, family = binomial)
+freq3_tab <- broom::tidy(model_freq3, exponentiate = TRUE, conf.int = TRUE)
+model_aic_freq3 <- step(model_freq3, direction = "backward")
+```
+
+```         
+```
+
+```{r}
+#| echo: false
+#| output: true
+#| label: tbl-logit-full_without_freq
+#| fig.pos: 'H'
+
+
+model_full_without_freq <- glm(levelBis ~ . - freq, data = Table_nolevel, family = binomial)
+
+logit_full_tab_without_freq <- broom::tidy(model_full_without_freq, exponentiate = TRUE, conf.int = FALSE)
+
+knitr::kable(logit_full_tab_without_freq, digits = 3, caption = "Résumé du modèle logistique complet sans freq")
+```
+
+Nous observons ici que contrairement à ce que nous avions eu dans le modèle complet, les résultats sont plus homogènes avec certaines hypothèses de nullité rejetées comme le poids.
+Ceci nous confirme que l'information donnée par fréquence est dispersée un peu partout sur les variables fat,bmi,type etc.
+Simplifions alors notre modèle par les critères AIC et BIC:
+
+```{r}
+#| label: logit-selection-final_without_freq
+#| echo: false
+#| output: false
+#| fig.pos: 'H'
+
+model_aic_without_freq <- step(model_full_without_freq, direction = "backward", k = 2, trace = 0)
+model_bic_without_freq <- step(model_full_without_freq, direction = "backward", k = log(nrow(Table_nolevel)), trace = 0)
+
+summary_final_without_freq_aic <- summary(model_aic_without_freq)
+summary_final_without_freq_bic <- summary(model_bic_without_freq)
+
+final_tab_without_freq_aic <- data.frame(
+  Variable = rownames(summary_final_without_freq_aic$coefficients),
+  Estimate = summary_final_without_freq_aic$coefficients[, "Estimate"],
+  `Std. Error` = summary_final_without_freq_aic$coefficients[, "Std. Error"],
+  `z value` = summary_final_without_freq_aic$coefficients[, "z value"],
+  `Pr(>|z|)` = summary_final_without_freq_aic$coefficients[, "Pr(>|z|)"]
+)
+final_tab_without_freq_bic <- data.frame(
+  Variable = rownames(summary_final_without_freq_bic$coefficients),
+  Estimate = summary_final_without_freq_bic$coefficients[, "Estimate"],
+  `Std. Error` = summary_final_without_freq_bic$coefficients[, "Std. Error"],
+  `z value` = summary_final_without_freq_bic$coefficients[, "z value"],
+  `Pr(>|z|)` = summary_final_without_freq_bic$coefficients[, "Pr(>|z|)"]
+)
+```
+
+```{r}
+#| label: table du résumé avec BIC
+#| echo: false
+#| output: true
+#| fig.pos: 'H'
+
+knitr::kable(final_tab_without_freq_bic, digits = 3, caption = "Résumé du modèle logistique sans fréquence final après sélection (BIC)")
+BIC(model_bic_without_freq)
+```
+
+Avec le critère BIC, nous observons que l'on a en plus de la variable duration, la variable Fat qui s'ajoute pour compenser la variable fréquence.
+Nous trouvons un BIC = 927
+
+```{r}
+#| label: table du résumé avec AIC
+#| echo: false
+#| output: true
+#| fig.pos: 'H'
+knitr::kable(final_tab_without_freq_aic, digits = 3, caption = "Résumé du modèle logistique sans fréquence final après sélection (AIC)")
+AIC(model_aic_without_freq)
+```
+
+Avec le critère AIC, nous observons que l'on a en plus de la variable associée à la durée d'entrainement, un ensemble de variables qui s'ajoutent.
+Ceci est justifié par la non pénalisation d'un modèle comportant énormément de variables.
+On trouve un AIC =911
+
+Néanmoins, on constate que nos valeurs de AIC et BIC sont nettement plus élevées que le AIC des modèles avec la variable fréquence.
+Ceci confirme que notre modèle sans fréquence est nettement moins performant que notre modèle global.
+Preuve encore une fois que la variable fréquence est indispensable pour la prédiction de LevelBis.
+
+# Conclusion
+
+À travers ce projet, nous avons exploré un dataset de 973 membres de salle de sport.
+Trois groupes distincts ont émergé : un groupe très sportif, et deux autres différenciés par leur morphologie.
+Le genre n'a pas d'influence sur les habitudes d'entraînement, il ne traduit qu'une différence d'attributs phyisiques.
+
+Concernant d'abord la variable associée au nombre de calories brûlées, la durée et la fréquence cardiaque sont les déterminants majeurs.
+Le modèle simplifié accepté statistiquement (p \> 0.05) possède un biais résiduel, corrigible en réintroduisant l'intéraction "duration × bpm_ave".
+Concernant maintenant le niveau d'expérience, la durée des séances est le prédicteur principal.
+Les pratiquants confirmés s'entraînent plus longtemps.
+La fréquence apporte une information secondaire.
+Le type de sport n'a pas d'effet direct significatif.
+Nous pouvons ainsi conclure que ce projet formalise une réalité : la performance sportive se résume à l'engagement, mesuré en temps et en intensité.
